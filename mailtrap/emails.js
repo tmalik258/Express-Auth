@@ -1,6 +1,7 @@
 import {
 	PASSWORD_RESET_REQUEST_TEMPLATE,
 	PASSWORD_RESET_SUCCESS_TEMPLATE,
+	PASSWORD_SET_SUCCESS_TEMPLATE,
 	VERIFICATION_EMAIL_TEMPLATE,
 } from "./emailTemplates.js";
 import { mailtrapClient, sender } from "./mailtrap.config.js";
@@ -28,7 +29,7 @@ export const sendVerificationEmail = async (email, verificationToken) => {
 	}
 };
 
-export const sendWelcomeEmail = async (email, name) => {
+export const sendWelcomeEmail = async (email, name, setPasswordUrl) => {
 	const recipients = [{ email }];
 
 	try {
@@ -38,7 +39,8 @@ export const sendWelcomeEmail = async (email, name) => {
 			template_uuid: "a1ef20eb-7bb0-4c2b-972a-9c99f6b8596e",
 			template_variables: {
 				company_info_name: "Express Auth Company",
-				name: name,
+				name,
+				setPasswordUrl: setPasswordUrl
 			},
 		});
 
@@ -90,5 +92,25 @@ export const sendResetSuccessEmail = async (email, resetUrl) => {
 		console.error(`Error sending reset success email`, error);
 
 		throw new Error(`Error sending reset success email: ${error}`);
+	}
+};
+
+export const sendPasswordSetSuccessEmail = async (email, resetUrl) => {
+	const recipients = [{ email }];
+
+	try {
+		const response = await mailtrapClient.send({
+			from: sender,
+			to: recipients,
+			subject: "Password set successful",
+			html: PASSWORD_SET_SUCCESS_TEMPLATE,
+			category: "Password Set",
+		});
+
+		console.log("Password set success Email sent successfully", response);
+	} catch (error) {
+		console.error(`Error sending password set success email`, error);
+
+		throw new Error(`Error sending password set success email: ${error}`);
 	}
 };

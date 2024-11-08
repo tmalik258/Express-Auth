@@ -1,23 +1,26 @@
-import { User } from "../models/user.model.js";
 import bcryptjs from "bcryptjs";
 import crypto from "crypto";
 import { generateTokenAndSetCookie } from "../utils/generateTokenAndSetCookie.js";
 import {
 	sendPasswordResetEmail,
+	sendPasswordSetSuccessEmail,
 	sendResetSuccessEmail,
 	sendVerificationEmail,
 	sendWelcomeEmail,
 } from "../mailtrap/emails.js";
+import { prisma } from "../lib/db.js";
 
 export const signup = async (req, res) => {
-	const { email, password, name } = req.body;
+	const { email, name } = req.body;
 
 	try {
-		if (!email || !password || !name) {
+		if (!email || !name) {
 			throw new Error("All fields are required");
 		}
 
-		const userAlreadyExists = await User.findOne({ email });
+		const userAlreadyExists = await prisma.User.findUnique({
+			where: { email },
+		});
 
 		if (userAlreadyExists) {
 			return res
@@ -25,33 +28,40 @@ export const signup = async (req, res) => {
 				.json({ success: false, message: "User already exists" });
 		}
 
-		const hashedPassword = await bcryptjs.hash(password, 10);
 		const verificationToken = Math.floor(
 			100000 + Math.random() * 900000
 		).toString();
 
-		const user = new User({
-			email,
-			password: hashedPassword,
-			name,
-			verificationToken,
-			verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours,
+		const user = await prisma.User.create({
+			data: {
+				email,
+				name,
+				verificationToken,
+				verificationTokenExpiresAt: new Date(
+					Date.now() + 24 * 60 * 60 * 1000
+				),
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+				verificationToken: true,
+				verificationTokenExpiresAt: true,
+			},
 		});
 
-		await user.save();
-
 		// jwt
-		generateTokenAndSetCookie(res, user._id);
+		generateTokenAndSetCookie(res, user.id);
 
 		await sendVerificationEmail(user.email, verificationToken);
 
 		res.status(201).json({
 			success: true,
 			message: "User created successfully",
-			user: {
-				...user._doc,
-				password: undefined,
-			},
+			user,
 		});
 	} catch (error) {
 		return res.status(400).json({ success: false, message: error.message });
@@ -59,12 +69,15 @@ export const signup = async (req, res) => {
 };
 
 export const verifyEmail = async (req, res) => {
-	const { code } = req.body;
+	const { code, email } = req.body;
 
 	try {
-		const user = await User.findOne({
-			verificationToken: code,
-			verificationTokenExpiresAt: { $gt: Date.now() },
+		const user = await prisma.User.findUnique({
+			where: {
+				email,
+				verificationToken: code,
+				verificationTokenExpiresAt: { gt: new Date() },
+			},
 		});
 
 		if (!user) {
@@ -74,20 +87,46 @@ export const verifyEmail = async (req, res) => {
 			});
 		}
 
-		user.isVerified = true;
-		user.verificationToken = undefined;
-		user.verificationTokenExpiresAt = undefined;
-		await user.save();
+		// generate password set token
+		const setPasswordToken = crypto.randomBytes(20).toString("hex");
+		const setPasswordExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-		await sendWelcomeEmail(user.email, user.name);
+		const updatedUser = await prisma.User.update({
+			where: {
+				id: user.id,
+			},
+			data: {
+				setPasswordToken: setPasswordToken,
+				setPasswordExpiresAt: setPasswordExpiresAt,
+				isVerified: true,
+				verificationToken: null,
+				verificationTokenExpiresAt: null,
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+				verificationToken: true,
+				verificationTokenExpiresAt: true,
+				setPasswordToken: true,
+				setPasswordExpiresAt: true,
+			},
+		});
+
+		await sendWelcomeEmail(
+			updatedUser.email,
+			updatedUser.name,
+			`${process.env.CLIENT_URL}/set-password/${setPasswordToken}`
+		);
 
 		res.status(200).json({
 			success: true,
 			message: "Email verified successfully",
-			user: {
-				...user._doc,
-				password: undefined,
-			},
+			user: updatedUser,
+			requirePasswordSetup: true, // Add this flag to inform the frontend
 		});
 	} catch (error) {
 		console.error("error in verifyEmail ", error);
@@ -101,7 +140,7 @@ export const login = async (req, res) => {
 	const { email, password } = req.body;
 
 	try {
-		const user = await User.findOne({ email });
+		const user = await prisma.User.findUnique({ where: { email } });
 
 		if (!user) {
 			return res
@@ -116,18 +155,29 @@ export const login = async (req, res) => {
 				.json({ success: false, message: "Invalid credentials" });
 		}
 
-		generateTokenAndSetCookie(res, user._id);
+		generateTokenAndSetCookie(res, user.id);
 
-		user.lastLogin = new Date();
-		await user.save();
+		const updatedUser = await prisma.User.update({
+			where: {
+				id: user.id,
+			},
+			data: {
+				lastLogin: new Date(),
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+			},
+		});
 
 		res.status(200).json({
 			success: true,
 			message: "Logged in successfully",
-			user: {
-				...user._doc,
-				password: undefined,
-			},
+			user: updatedUser,
 		});
 	} catch (error) {
 		console.error("error in login ", error);
@@ -144,7 +194,8 @@ export const forgotPassword = async (req, res) => {
 	const { email } = req.body;
 
 	try {
-		const user = await User.findOne({ email });
+		const user = await prisma.User.findUnique({ where: { email } });
+
 		if (!user) {
 			return res
 				.status(400)
@@ -153,26 +204,38 @@ export const forgotPassword = async (req, res) => {
 
 		// generate reset token
 		const resetToken = crypto.randomBytes(20).toString("hex");
-		const resetTokenExpiresAt = Date.now() + 1 * 60 * 60 * 1000; // 1 hour
+		const resetTokenExpiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
 
-		user.resetPasswordToken = resetToken;
-		user.resetPasswordExpiresAt = resetTokenExpiresAt;
-
-		await user.save();
+		const updatedUser = await prisma.User.update({
+			where: {
+				id: user.id,
+			},
+			data: {
+				resetPasswordToken: resetToken,
+				resetPasswordExpiresAt: resetTokenExpiresAt,
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+				resetPasswordToken: true,
+				resetPasswordExpiresAt: true,
+			},
+		});
 
 		// send email
 		await sendPasswordResetEmail(
-			user.email,
+			updatedUser.email,
 			`${process.env.CLIENT_URL}/reset-password/${resetToken}`
 		);
 
 		res.status(200).json({
 			success: true,
 			message: "Password reset link sent to your email",
-			user: {
-				...user._doc,
-				password: undefined,
-			},
+			user: updatedUser,
 		});
 	} catch (error) {
 		console.error("Error in forgot password", error);
@@ -183,11 +246,18 @@ export const forgotPassword = async (req, res) => {
 export const resetPassword = async (req, res) => {
 	try {
 		const { token } = req.params;
-		const { password } = req.body;
+		const { email, password } = req.body;
 
-		const user = await User.findOne({
-			resetPasswordToken: token,
-			resetPasswordExpiresAt: { $gt: Date.now() },
+		if (!password) {
+			throw new Error("Password is required");
+		}
+
+		const user = await prisma.User.findUnique({
+			where: {
+				email,
+				resetPasswordToken: token,
+				resetPasswordExpiresAt: { gt: new Date() },
+			},
 		});
 
 		if (!user) {
@@ -200,16 +270,28 @@ export const resetPassword = async (req, res) => {
 		// update password
 		const hashedPassword = await bcryptjs.hash(password, 10);
 
-		user.password = hashedPassword;
-		user.resetPasswordToken = undefined;
-		user.resetPasswordExpiresAt = undefined;
+		const updatedUser = await prisma.User.update({
+			where: {
+				id: user.id,
+			},
+			data: {
+				password: hashedPassword,
+				resetPasswordToken: null,
+				resetPasswordExpiresAt: null,
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+				resetPasswordToken: true,
+				resetPasswordExpiresAt: true,
+			},
+		});
 
-		await user.save();
-
-		await sendResetSuccessEmail(user.email);
-
-		// // jwt
-		// generateTokenAndSetCookie(res, user._id);
+		await sendResetSuccessEmail(updatedUser.email);
 
 		res.status(200).json({
 			success: true,
@@ -221,9 +303,79 @@ export const resetPassword = async (req, res) => {
 	}
 };
 
+export const setPassword = async (req, res) => {
+	try {
+		const { token } = req.params;
+		const { email, password } = req.body;
+
+		if (!password) {
+			throw new Error("Password is required");
+		}
+
+		const user = await prisma.User.findUnique({
+			where: {
+				email,
+				setPasswordToken: token,
+				setPasswordExpiresAt: { gt: new Date() },
+			},
+		});
+
+		if (!user) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid or expired password set token",
+			});
+		}
+
+		// update password
+		const hashedPassword = await bcryptjs.hash(password, 10);
+
+		const updatedUser = await prisma.User.update({
+			where: {
+				id: user.id,
+			},
+			data: {
+				password: hashedPassword,
+				setPasswordToken: null,
+				setPasswordExpiresAt: null,
+			},
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+				setPasswordToken: true,
+				setPasswordExpiresAt: true,
+			},
+		});
+
+		await sendPasswordSetSuccessEmail(updatedUser.email);
+
+		res.status(200).json({
+			success: true,
+			message: "Password set successful",
+		});
+	} catch (error) {
+		console.error("Error in setPassword: ", error);
+		res.status(400).json({ success: false, message: error.message });
+	}
+};
+
 export const checkAuth = async (req, res) => {
 	try {
-		const user = await User.findById(req.userId).select("-password");
+		const user = await prisma.User.findUnique({
+			where: { id: req.userId },
+			select: {
+				// to exclude some fields like password
+				id: true,
+				email: true,
+				name: true,
+				isVerified: true,
+				lastLogin: true,
+			},
+		});
 
 		if (!user) {
 			return res
