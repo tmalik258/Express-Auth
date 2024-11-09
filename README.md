@@ -8,9 +8,9 @@ This project is a RESTful API for user authentication using Express.js, Prisma, 
 - **Login**: Allows users to log in using email and password.
 - **Email Verification**: Sends a verification token to the user's email after signup.
 - **Password Management**:
-  - Forgot password: Sends a reset link to the user's email.
-  - Reset password: Allows users to reset their password with a valid token.
   - Set password: Allows users to set a new password after email verification.
+  - Forgot password: Sends a reset link to the user's email.
+  - Reset password: Users can reset their password with a valid token.
 - **Token-based Authentication**: Uses JWT tokens for secure authentication and session management.
 - **Check Auth**: Verifies the user's authentication status.
 
@@ -25,8 +25,8 @@ This project is a RESTful API for user authentication using Express.js, Prisma, 
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/auth-api.git
-   cd auth-api
+   git clone https://github.com/tmalik258/express-auth.git
+   cd express-auth
    ```
 
 2. Install dependencies:
@@ -40,6 +40,12 @@ This project is a RESTful API for user authentication using Express.js, Prisma, 
    DATABASE_URL=your_postgresql_database_url
    JWT_SECRET=your_jwt_secret
    CLIENT_URL=http://localhost:3000
+   PORT=5000
+   NODE_ENV='development' or 'production'
+   MAILTRAP_TOKEN=your_mailtrap_token
+   MAILTRAP_ENDPOINT=https://send.api.mailtrap.io/
+   MAILTRAP_SENDER_EMAIL=hello@demomailtrap.com
+   MAILTRAP_SENDER_EMAIL_NAME='Sender Name'
    ```
 
 4. Set up the Prisma database:
@@ -48,6 +54,16 @@ This project is a RESTful API for user authentication using Express.js, Prisma, 
    npx prisma generate
    npx prisma db push
    ```
+
+## Running the Application
+
+1. Start the server:
+   ```bash
+   npm run dev
+   ```
+   The server will run on `http://localhost:5000` by default.
+
+2. Use Postman or any other API testing tool to test the API endpoints.
 
 ## API Endpoints
 
@@ -103,15 +119,14 @@ model User {
 }
 ```
 
-## Running the Application
+## Email Templates
 
-1. Start the server:
-   ```bash
-   npm run dev
-   ```
-   The server will run on `http://localhost:5000` by default.
-
-2. Use Postman or any other API testing tool to test the API endpoints.
+mailtrap/emailTemplates.js
+  - **VERIFICATION_EMAIL_TEMPLATE**: An email template has been sent for account verification along with the code.
+  - After verification, a welcome email is sent and for that mailtrap's template is being used.
+  - **PASSWORD_RESET_REQUEST_TEMPLATE**: This email template is used after submitting a password reset request.
+  - **PASSWORD_RESET_SUCCESS_TEMPLATE**: Template used when the password has been reset successfully.
+  - **PASSWORD_SET_SUCCESS_TEMPLATE**: After account verification, a password is set, after which this template is used to send an email.
 
 ## Testing
 
